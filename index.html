@@ -105,6 +105,7 @@ input, button{outline:none;font-family:inherit}
                 <div class="flex gap-2">
                     <input type="text" id="apiUrl" value="http://192.168.1.X:5000" class="flex-1 bg-[var(--bg)] border border-[var(--bdr)] rounded px-2 py-1 text-xs text-white">
                     <button onclick="saveApiUrl()" class="text-xs bg-gray-700 px-3 rounded text-white">Guardar</button>
+                    <button onclick="clearApiUrl()" class="text-xs bg-red-600 px-3 rounded text-white" title="Borrar dirección"><i class="fas fa-trash"></i></button>
                 </div>
                 <p class="text-[9px] text-gray-500 mt-1">Usa la IP que muestra el script Python en tu PC.</p>
             </div>
@@ -476,6 +477,14 @@ function saveApiUrl() {
 
 function loadSettingsUI() {
     $('apiUrl').value = API_BASE;
+}
+
+function clearApiUrl() {
+    $('apiUrl').value = '';
+    localStorage.removeItem('flux_api');
+    API_BASE = ''; // Reseteamos la variable global
+    checkServer(); // Volvemos a verificar (se pondrá en rojo)
+    toast("Dirección borrada");
 }
 
 async function clearDB() {
