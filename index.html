@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Flux Hybrid</title>
+<!-- PWA Meta Tags -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0A0A0B">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+<script>tailwind.config={theme:{extend:{fontFamily:{main:['Outfit','sans-serif']}}}}</script>
+<style>
+:root{--bg:#0A0A0B;--bg2:#111113;--card:#19191C;--bdr:#2A2A2F;--muted:#6B6B75;--fg:#EDEDEF;--accent:#FF6B35}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--fg);height:100vh;overflow:hidden}
+input, button{outline:none;font-family:inherit}
+::-webkit-scrollbar{width:0px}
+.bg-orb{position:fixed;border-radius:50%;filter:blur(120px);opacity:.08;pointer-events:none;z-index:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:20px;height:20px;border:2px solid var(--bdr);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+
+/* Componentes UI */
+.tab-btn{flex:1;padding:12px;text-align:center;font-size:13px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;transition:all .3s}
+.tab-btn.active{color:var(--accent);border-color:var(--accent)}
+.song-item{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;background:var(--card);margin-bottom:8px;transition:transform .1s}
+.song-item:active{transform:scale(0.98)}
+.song-item.playing{background:rgba(255,107,53,0.1);border:1px solid rgba(255,107,53,0.3)}
+
+/* Player Overlay */
+#vidOverlay{position:fixed;inset:0;z-index:100;background:#000;display:none;align-items:center;justify-content:center}
+#vidOverlay.open{display:flex}
+#vidOverlay video{width:100%;height:100%;object-fit:contain}
+.vid-controls{position:absolute;bottom:20px;left:20px;right:20px;display:flex;gap:10px;justify-content:center}
+.vid-btn{width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,0.2);color:white;border:none;display:flex;align-items:center;justify-content:center;font-size:18px}
+
+/* Server Status */
+.status-dot{width:8px;height:8px;border-radius:50%}
+.status-dot.online{background:#22C55E;box-shadow:0 0 8px #22C55E}
+.status-dot.offline{background:#FF4455;box-shadow:0 0 8px #FF4455}
+
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);color:white;padding:10px 20px;border-radius:20px;font-size:13px;z-index:200;animation:fadeIn .3s;pointer-events:none}
+@keyframes fadeIn{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+</style>
+</head>
+<body>
+
+<div class="bg-orb" style="width:300px;height:300px;background:var(--accent);top:-50px;left:-50px"></div>
+<div class="bg-orb" style="width:300px;height:300px;background:purple;bottom:-50px;right:-50px"></div>
+
+<!-- Video Overlay (Preview) -->
+<div id="vidOverlay">
+    <video id="vidEl" controls playsinline></video>
+    <button onclick="closeVid()" style="position:absolute;top:20px;right:20px;z-index:110;background:rgba(0,0,0,0.5);color:white;border:none;padding:10px;border-radius:50%;width:40px;height:40px"><i class="fas fa-times"></i></button>
+</div>
+
+<!-- Main App Structure -->
+<div class="flex flex-col h-full relative z-10">
+    <!-- Header -->
+    <header class="flex items-center justify-between px-4 py-3 border-b" style="background:var(--bg2);border-color:var(--bdr)">
+        <div class="flex items-center gap-2">
+            <i class="fas fa-bolt text-[var(--accent)]"></i>
+            <span class="font-bold text-lg">FLUX</span>
+        </div>
+        <div class="flex items-center gap-2">
+            <div id="serverStatus" class="flex items-center gap-2 px-2 py-1 rounded-full" style="background:var(--bg)">
+                <div class="status-dot offline" id="connDot"></div>
+                <span class="text-[10px] text-gray-400" id="connText">Offline</span>
+            </div>
+            <button onclick="openSettings()" class="text-gray-400"><i class="fas fa-cog"></i></button>
+        </div>
+    </header>
+
+    <!-- Tabs -->
+    <div class="flex border-b" style="border-color:var(--bdr);background:var(--bg2)">
+        <button onclick="setTab('library')" class="tab-btn active" id="tab-lib">Mi Música</button>
+        <button onclick="setTab('search')" class="tab-btn" id="tab-search">Buscar & Descargar</button>
+    </div>
+
+    <!-- Content Areas -->
+    <main class="flex-1 overflow-y-auto relative p-3" id="mainContent">
+        <!-- Library View (Offline + Local) -->
+        <div id="view-library">
+            <div id="localSongs"></div>
+            <div id="emptyLib" class="text-center mt-20 text-gray-500 hidden">
+                <i class="fas fa-music text-4xl mb-3"></i>
+                <p>No hay canciones en el dispositivo.</p>
+                <p class="text-xs mt-2">Ve a "Buscar" para descargar.</p>
+            </div>
+        </div>
+
+        <!-- Search View (Online/Server) -->
+        <div id="view-search" class="hidden">
+            <div class="flex gap-2 mb-4">
+                <input type="text" id="searchInput" placeholder="Buscar en YouTube..." class="flex-1 bg-[var(--bg)] border border-[var(--bdr)] rounded-xl px-4 py-3 text-sm text-white">
+                <button onclick="doSearch()" class="bg-[var(--accent)] text-white px-4 rounded-xl"><i class="fas fa-search"></i></button>
+            </div>
+            
+            <!-- Config IP -->
+            <div id="serverConfig" class="mb-4 p-3 bg-[var(--card)] rounded-xl border border-[var(--bdr)]">
+                <p class="text-[10px] text-gray-400 mb-1 uppercase font-bold">IP del Servidor (Tu PC)</p>
+                <div class="flex gap-2">
+                    <input type="text" id="apiUrl" value="http://192.168.1.X:5000" class="flex-1 bg-[var(--bg)] border border-[var(--bdr)] rounded px-2 py-1 text-xs text-white">
+                    <button onclick="saveApiUrl()" class="text-xs bg-gray-700 px-3 rounded text-white">Guardar</button>
+                </div>
+                <p class="text-[9px] text-gray-500 mt-1">Usa la IP que muestra el script Python en tu PC.</p>
+            </div>
+
+            <div id="searchResults" class="space-y-3"></div>
+        </div>
+    </main>
+
+    <!-- Footer Player -->
+    <footer class="border-t p-3 flex items-center gap-3" style="background:var(--bg2);border-color:var(--bdr);padding-bottom:max(20px, env(safe-area-inset-bottom))">
+        <div class="flex-1 overflow-hidden" onclick="toggleLyrics()">
+            <h4 id="pTitle" class="text-sm font-bold text-white truncate">-</h4>
+            <p id="pArtist" class="text-xs text-gray-400 truncate">-</p>
+        </div>
+        <div class="flex items-center gap-4">
+            <button onclick="playPrev()" class="text-gray-400"><i class="fas fa-step-backward"></i></button>
+            <button id="playBtn" onclick="togglePlay()" class="w-10 h-10 rounded-full flex items-center justify-center text-white" style="background:var(--accent)">
+                <i id="playIcon" class="fas fa-play text-sm"></i>
+            </button>
+            <button onclick="playNext()" class="text-gray-400"><i class="fas fa-step-forward"></i></button>
+        </div>
+    </footer>
+</div>
+
+<dialog id="settingsModal" class="bg-transparent p-0 w-full h-full max-w-none max-h-none backdrop:bg-black/80">
+    <div class="bg-[var(--card)] w-11/12 max-w-sm mx-auto mt-20 rounded-2xl p-6 border border-[var(--bdr)]">
+        <h3 class="font-bold text-lg mb-4">Configuración</h3>
+        <div class="space-y-4">
+            <div>
+                <label class="text-xs text-gray-400 block mb-1">URL API Servidor</label>
+                <input type="text" id="settingsApi" class="w-full bg-[var(--bg)] border border-[var(--bdr)] rounded p-2 text-white">
+            </div>
+            <div>
+                <label class="text-xs text-gray-400 block mb-1">Base de Datos Local</label>
+                <button onclick="clearDB()" class="w-full text-left py-2 text-red-400 text-sm">Borrar todo el contenido offline</button>
+            </div>
+        </div>
+        <button onclick="document.getElementById('settingsModal').close()" class="mt-6 w-full py-3 bg-[var(--accent)] rounded-xl text-white font-bold">Cerrar</button>
+    </div>
+</dialog>
+
+<div id="toasts"></div>
+
+<script>
+// --- CONFIGURACIÓN ---
+let API_BASE = localStorage.getItem('flux_api') || 'http://127.0.0.1:5000';
+
+// --- INDEXEDDB (LOCAL STORAGE OFFLINE) ---
+const DB_NAME = 'FluxHybridDB';
+let db;
+
+async function initDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = e => {
+            const d = e.target.result;
+            if(!d.objectStoreNames.contains('songs')) d.createObjectStore('songs', { keyPath: 'id' });
+        };
+        req.onsuccess = e => { db = e.target.result; resolve(db); };
+        req.onerror = e => { console.error("DB Error", e); resolve(null); };
+    });
+}
+
+async function saveSongToDB(song) {
+    if(!db) return;
+    const tx = db.transaction('songs', 'readwrite');
+    tx.objectStore('songs').put(song);
+}
+
+async function deleteSongFromDB(id) {
+    if(!db) return;
+    const tx = db.transaction('songs', 'readwrite');
+    tx.objectStore('songs').delete(id);
+}
+
+async function getSongsFromDB() {
+    if(!db) return [];
+    return new Promise(resolve => {
+        const tx = db.transaction('songs', 'readonly');
+        const req = tx.objectStore('songs').getAll();
+        req.onsuccess = () => resolve(req.result);
+    });
+}
+
+// --- ESTADO APP ---
+var audio = new Audio();
+var S = {
+    songs: [], // Canciones en IndexedDB
+    curId: null,
+    queue: [],
+    qIdx: -1,
+    playing: false,
+    downloading: {} // Seguimiento de descargas activas
+};
+
+// --- INICIO ---
+window.onload = async () => {
+    await initDB();
+    loadSettingsUI();
+    
+    // Cargar canciones locales
+    const saved = await getSongsFromDB();
+    S.songs = saved.map(s => ({...s, url: URL.createObjectURL(s.blob)}));
+    renderLibrary();
+    
+    // Verificar conexión
+    checkServer();
+    setInterval(checkServer, 5000);
+};
+
+// --- LOGICA DE REPRODUCCIÓN ---
+function playSong(id) {
+    const s = S.songs.find(x => x.id === id);
+    if(!s) return;
+    
+    S.curId = id;
+    audio.src = s.url;
+    audio.play();
+    S.playing = true;
+    updatePlayerUI();
+    renderLibrary(); // Para actualizar icono playing
+}
+
+function togglePlay() {
+    if(!S.curId && S.songs.length > 0) playSong(S.songs[0].id);
+    else if(audio.paused) audio.play();
+    else audio.pause();
+    S.playing = !audio.paused;
+    updatePlayerUI();
+}
+
+function updatePlayerUI() {
+    const s = S.songs.find(x => x.id === S.curId);
+    if(s) {
+        $('pTitle').textContent = s.title;
+        $('pArtist').textContent = s.artist;
+    }
+    $('playIcon').className = audio.paused ? 'fas fa-play' : 'fas fa-pause';
+}
+
+// --- LÓGICA ONLINE / DESCARGAS ---
+async function checkServer() {
+    try {
+        // Intentamos ping simple (timeout corto para no congelar)
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
+        await fetch(`${API_BASE}/api/files`, { signal: controller.signal });
+        clearTimeout(timeout);
+        
+        $('connDot').className = 'status-dot online';
+        $('connText').textContent = 'Online (PC)';
+        $('serverConfig').classList.add('hidden'); // Ocultar config si funciona
+        return true;
+    } catch(e) {
+        $('connDot').className = 'status-dot offline';
+        $('connText').textContent = 'Offline';
+        $('serverConfig').classList.remove('hidden');
+        return false;
+    }
+}
+
+async function doSearch() {
+    const q = $('searchInput').value;
+    if(!q) return;
+    
+    const resDiv = $('searchResults');
+    resDiv.innerHTML = '<div class="text-center"><div class="spinner mx-auto"></div></div>';
+    
+    try {
+        const r = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(q)}`);
+        const data = await r.json();
+        
+        if(data.error) throw new Error(data.error);
+        
+        resDiv.innerHTML = '';
+        data.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'song-item';
+            div.innerHTML = `
+                <img src="${item.thumbnail}" class="w-12 h-12 rounded bg-gray-800 object-cover">
+                <div class="flex-1 overflow-hidden">
+                    <h4 class="text-sm font-bold truncate text-white">${item.title}</h4>
+                    <p class="text-xs text-gray-400 truncate">${item.artist || item.uploader}</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="previewVid('${item.url}')" class="w-8 h-8 rounded-full bg-gray-700 text-white flex items-center justify-center"><i class="fas fa-play text-xs"></i></button>
+                    <button id="dl-${item.id}" onclick="downloadSong('${item.id}', '${item.title.replace(/'/g, "\\'")}')" class="w-8 h-8 rounded-full bg-[var(--accent)] text-white flex items-center justify-center"><i class="fas fa-download text-xs"></i></button>
+                </div>
+            `;
+            resDiv.appendChild(div);
+        });
+    } catch(e) {
+        resDiv.innerHTML = `<p class="text-center text-red-400 text-sm mt-4">Error: No se pudo conectar al servidor.<br>Verifica la IP en configuración.</p>`;
+    }
+}
+
+// PREVIEW VIDEO
+function previewVid(url) {
+    // Usamos iframe de YouTube para preview rápido sin descargar
+    // Extraer ID de youtube
+    let vidId = '';
+    try {
+        const urlObj = new URL(url);
+        if(urlObj.hostname.includes('youtube.com')) vidId = urlObj.searchParams.get('v');
+        else if(urlObj.hostname.includes('youtu.be')) vidId = urlObj.pathname.slice(1);
+    } catch(e){}
+    
+    if(vidId) {
+        // Opción A: Abrir YouTube app o navegador (Más fiable)
+        window.open(`https://www.youtube.com/watch?v=${vidId}`, '_blank');
+    } else {
+        // Fallback si no es youtube (raro con yt-dlp)
+        $('vidEl').src = url;
+        $('vidOverlay').classList.add('open');
+    }
+}
+
+function closeVid() {
+    $('vidOverlay').classList.remove('open');
+    $('vidEl').pause();
+}
+
+// DESCARGA Y GUARDADO
+async function downloadSong(vidId, title) {
+    const btn = $(`dl-${vidId}`);
+    if(!btn) return;
+    
+    btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+    
+    try {
+        // 1. Iniciar descarga en Python
+        await fetch(`${API_BASE}/api/download`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: `https://www.youtube.com/watch?v=${vidId}`, type: 'audio', quality: 320})
+        });
+        
+        // 2. Polling de estado
+        let status = {downloading: true};
+        while(status.downloading) {
+            await new Promise(r => setTimeout(r, 1000));
+            const r = await fetch(`${API_BASE}/api/download-status`);
+            status = await r.json();
+            // Aquí podríamos mostrar porcentaje en el botón
+            if(status.error) throw new Error(status.error);
+        }
+        
+        // 3. Una vez terminado, obtener el archivo y guardarlo localmente
+        // Asumimos que el último archivo descargado es el que queremos
+        const filesRes = await fetch(`${API_BASE}/api/files`);
+        const files = await filesRes.json();
+        // Filtrar por m4a (audio) y buscar el más reciente
+        const audioFiles = files.filter(f => f.endsWith('.m4a')).sort().reverse();
+        if(audioFiles.length === 0) throw new Error("No se encontró el archivo descargado");
+        
+        const filename = audioFiles[0];
+        
+        // Fetch BLOB
+        const blobRes = await fetch(`${API_BASE}/api/get-raw-file/${filename}`);
+        const blob = await blobRes.blob();
+        
+        // Guardar en IndexedDB
+        const songId = Date.now().toString();
+        const newSong = {
+            id: songId,
+            title: title,
+            artist: 'Descargado', // Podríamos mejorar esto metiendo metadata en otro endpoint
+            blob: blob,
+            url: URL.createObjectURL(blob)
+        };
+        
+        await saveSongToDB(newSong);
+        S.songs.push(newSong);
+        
+        renderLibrary();
+        toast("Descargado y guardado en móvil");
+        
+        // Resetear botón
+        btn.innerHTML = '<i class="fas fa-check"></i>';
+        btn.disabled = true;
+        btn.classList.replace('bg-[var(--accent)]', 'bg-green-500');
+        
+    } catch(e) {
+        console.error(e);
+        toast("Error en descarga: " + e.message);
+        btn.innerHTML = '<i class="fas fa-exclamation"></i>';
+    }
+}
+
+// --- UI HELPERS ---
+function setTab(tab) {
+    $('view-library').classList.add('hidden');
+    $('view-search').classList.add('hidden');
+    $('tab-lib').classList.remove('active');
+    $('tab-search').classList.remove('active');
+    
+    $(`view-${tab}`).classList.remove('hidden');
+    $(`tab-${tab}`).classList.add('active');
+    
+    if(tab === 'library') renderLibrary();
+}
+
+function renderLibrary() {
+    const container = $('localSongs');
+    container.innerHTML = '';
+    
+    if(S.songs.length === 0) {
+        $('emptyLib').classList.remove('hidden');
+        return;
+    }
+    $('emptyLib').classList.add('hidden');
+    
+    S.songs.forEach(s => {
+        const isCur = S.curId === s.id;
+        const el = document.createElement('div');
+        el.className = `song-item ${isCur ? 'playing' : ''}`;
+        el.onclick = () => playSong(s.id);
+        el.innerHTML = `
+            <div class="w-10 h-10 rounded bg-gray-800 flex items-center justify-center text-gray-500">
+                ${isCur && S.playing ? '<i class="fas fa-volume-up text-[var(--accent)]"></i>' : '<i class="fas fa-music"></i>'}
+            </div>
+            <div class="flex-1 overflow-hidden">
+                <h4 class="text-sm font-bold truncate ${isCur?'text-[var(--accent)]':'text-white'}">${s.title}</h4>
+                <p class="text-xs text-gray-400 truncate">${s.artist}</p>
+            </div>
+            <button onclick="event.stopPropagation(); deleteLocal('${s.id}')" class="text-gray-600 p-2"><i class="fas fa-trash"></i></button>
+        `;
+        container.appendChild(el);
+    });
+}
+
+async function deleteLocal(id) {
+    if(!confirm("¿Borrar canción del móvil?")) return;
+    await deleteSongFromDB(id);
+    S.songs = S.songs.filter(x => x.id !== id);
+    if(S.curId === id) {
+        audio.pause();
+        S.curId = null;
+        updatePlayerUI();
+    }
+    renderLibrary();
+}
+
+function $(id) { return document.getElementById(id); }
+
+function toast(msg) {
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = msg;
+    $('toasts').appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+}
+
+// Settings
+function openSettings() {
+    $('settingsApi').value = API_BASE;
+    document.getElementById('settingsModal').showModal();
+}
+
+function saveApiUrl() {
+    const val = $('apiUrl').value;
+    if(val) {
+        API_BASE = val.replace(/\/$/, ""); // Remove trailing slash
+        localStorage.setItem('flux_api', API_BASE);
+        toast("IP Guardada");
+        checkServer();
+    }
+}
+
+function loadSettingsUI() {
+    $('apiUrl').value = API_BASE;
+}
+
+async function clearDB() {
+    if(confirm("¿Seguro que quieres borrar TODAS las canciones descargadas?")) {
+        indexedDB.deleteDatabase(DB_NAME);
+        location.reload();
+    }
+}
+</script>
+</body>
+</html>
